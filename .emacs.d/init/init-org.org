@@ -1,0 +1,278 @@
+* defaults
+  #+BEGIN_SRC emacs-lisp
+    (require 'org)
+
+    (setq org-startup-indented t) ; 行首缩进
+    (setq org-hide-leading-stars t) ; 只显示一颗星
+    (setq org-ellipsis " \u25bc" ) ; 题目缩略显示
+    (setq org-startup-truncated nil)
+    (setq org-html-postamble nil)
+
+    (require 'ox-latex)
+    (setq org-latex-inputenc-alist '(("utf8" . "utf8x")))
+
+    (setq org-src-fontify-natively t)
+
+    (setq org-M-RET-may-split-line '((default . nil))) ; s-enter/m-enter 不会切断header
+
+    (setq org-image-actual-width nil)
+
+    ;; ditaa for chart
+    (let ((ditaaExe (executable-find "ditaa")))
+      (when ditaaExe
+        (setq org-ditaa-jar-path (expand-file-name ditaaExe))
+        (org-babel-do-load-languages
+         'org-babel-load-languages
+         '((ditaa . t)))
+        (defun my-org-confirm-babel-evaluate (lang body)
+          (not (string= lang "ditaa"))) ; don't ask for ditaa
+        (setq org-confirm-babel-evaluate 'my-org-confirm-babel-evaluate)))
+
+    ;; for confluence
+    (require 'ox-confluence)
+  #+END_SRC
+** bullets
+#+BEGIN_SRC emacs-lisp
+  (require-package 'org-bullets)
+  (require 'org-bullets)
+  (add-hook 'org-mode-hook (lambda () (org-bullets-mode 1)))
+#+END_SRC
+* evil
+#+BEGIN_SRC emacs-lisp
+  (require-package 'evil-org)
+
+  (require 'evil-org)
+  (add-hook 'org-mode-hook 'evil-org-mode)
+  (evil-org-set-key-theme '(navigation insert textobjects additional shift todo))
+#+END_SRC
+* capture
+#+BEGIN_SRC emacs-lisp
+  (setq custom-org-note-self "~/Work/cloud/cloud/workorg/self.org")
+  (setq custom-org-note-work "~/Work/cloud/cloud/workorg/project.org")
+#+END_SRC
+
+#+BEGIN_SRC emacs-lisp
+    (evil-leader/set-key
+      "oc" 'org-capture)
+    (setq org-export-coding-system 'utf-8)
+
+    (setq org-capture-templates
+          '(("n"
+            "Note"
+            entry
+            (file+headline custom-org-note-self "Note")
+            "* TODO [#B] %?\n %i\n %a"
+            :empty-lines 1)))
+#+END_SRC
+* todo
+#+BEGIN_SRC emacs-lisp
+  (setq org-agenda-files '("~/Work/cloud/cloud/workorg/project.org"))
+  (setq org-columns-default-format "%50ITEM(Task) %10CLOCKSUM %16TIMESTAMP_IA")
+
+  (slegetank/leader-define-key "o" nil "Org Mode"
+                               "oa" 'org-agenda "Agenda"
+                               "olc" 'org-store-link "Create link"
+                               "oli" 'org-insert-link "Insert link")
+
+  (setq org-todo-keywords
+        '((sequence "TODO(t)" "IN-PROGRESS(i)" "QA(q@/!)" "WAITING(w@/!)" "APPSTORE(a!)" "LONG-TASK(l)" "|" "DONE(d)" "CANCELED(c)")))
+
+  (setq org-todo-keyword-faces
+        '(("TODO" . org-warning)
+          ("IN-PROGRESS" . "orange")
+          ("WAITING" . "gray")
+          ("DONE" . "green")
+          ("CANCELED" . (:foreground "blue" :weight bold))))
+
+  (setq org-log-done 'note)
+
+#+END_SRC
+* timestamp
+中文
+#+BEGIN_SRC emacs-lisp
+  (require-package 'cal-china-x)
+  (require 'cal-china-x)
+  (setq mark-holidays-in-calendar t)
+  (setq cal-china-x-important-holidays cal-china-x-chinese-holidays)
+  (setq cal-china-x-general-holidays '((holiday-lunar 1 15 "元宵节")))
+  (setq calendar-holidays
+        (append cal-china-x-important-holidays
+                cal-china-x-general-holidays
+                ))
+#+END_SRC
+
+时间戳格式：
+#+BEGIN_SRC emacs-lisp
+  (setq org-display-custom-times t)
+  (setq org-time-stamp-custom-formats '("<%y-%m-%d %a>" . "<%y-%m-%d %a %H:%M>"))
+#+END_SRC
+* Edit code
+org mode code blocks supported languages: http://orgmode.org/manual/Languages.html#Languages
+  #+BEGIN_SRC emacs-lisp
+    ;; For editing source code
+    (defun custom-indent-org-block-automatically ()
+      (interactive)
+      (when (org-in-src-block-p)
+        (org-edit-special)
+        (indent-region (point-min) (point-max))
+        (org-edit-src-exit)))
+
+    (defvar slegetank/org-code-block-language "emacs-lisp")
+
+    (defun slegetank/wrap-region-into-code-block (start end)
+      "Custom method, wrap selected region into #+BEGIN_SRC `slegetank/org-code-block-language' ... #+END_SRC"
+      (interactive "r")
+
+      (let ((mode (ivy-read (format "Mode (default %s): " slegetank/org-code-block-language) nil)))
+        ;; 如果没输入，则取默认值；输入了，则更新默认值
+        (if (string-equal mode "")
+            (setq mode slegetank/org-code-block-language)
+          (setq slegetank/org-code-block-language mode))
+        (let ((region-content (buffer-substring start end)))
+          (kill-region start end)
+          (deactivate-mark)
+
+          (unless (s-suffix-p "\n" region-content)
+            (setq region-content (s-append "\n" region-content)))
+
+          (insert-string (format "#+BEGIN_SRC %s\n%s#+END_SRC\n" mode region-content))
+          (forward-line -2)
+          (org-edit-special)
+          (indent-region (point-min) (point-max))
+          (org-edit-src-exit)
+          (forward-line 2))))
+
+    (evil-leader/set-key-for-mode 'org-mode
+      "==" 'custom-indent-org-block-automatically
+      "oc" 'slegetank/wrap-region-into-code-block)
+
+    ;; If src come from org mode, use these functions
+    (defun custom-org-edit-src-exit ()
+      (interactive)
+      (when (bound-and-true-p org-src-mode)
+        (org-edit-src-exit)))
+
+    (defun custom-org-edit-src-save ()
+      (interactive)
+      (when (bound-and-true-p org-src-mode)
+        (org-edit-src-save)))
+
+    (defun custom-save-buffer ()
+      (interactive)
+      (if (bound-and-true-p org-src-mode)
+          (org-edit-src-save)
+        (save-buffer)))
+
+    (global-set-key (kbd "s-s") 'custom-save-buffer)
+
+    (evil-leader/set-key
+      "eq" 'custom-org-edit-src-exit
+      "es" 'custom-org-edit-src-save)
+  #+END_SRC
+* Drag file
+分发处理右键拖拽
+#+BEGIN_SRC emacs-lisp
+  (defun custom-org-drag-file-method (event)
+    (interactive "e")
+    "deal with mouse drag file into org"
+    (x-focus-frame nil)
+    (let* ((payload (car (last event)))
+           (type (car payload))
+           (fromname (cadr payload)))
+      (when (and (eq 'drag-n-drop (car event))
+                  (eq 'file type))
+        (cond ((and (fboundp 'slegetank/blog-drag-image) (slegetank/org-blog-p)) (slegetank/blog-drag-image fromname)) ; blog
+              ((and (fboundp 'custom-mail-drag-attach) (custom-org-mail-p)) (custom-mail-drag-attach fromname)) ; mail
+              ((and (fboundp 'custom-common-org-drag-image) (custom-org-common-p)) (custom-common-org-drag-image fromname)) ; common
+              (t (find-file fromname))))))
+
+  (define-key org-mode-map (kbd "<drag-n-drop>") 'custom-org-drag-file-method)
+#+END_SRC
+
+普通的org 文档，以文件头部有#+TITLE区分。
+#+BEGIN_SRC emacs-lisp
+  (defun org-global-props (&optional property buffer)
+    "Get the plists of global org properties of current buffer."
+    (unless property (setq property "PROPERTY"))
+    (with-current-buffer (or buffer (current-buffer))
+      (org-element-map (org-element-parse-buffer) 'keyword (lambda (el) (when (string-match property (org-element-property :key el)) el)))))
+
+  (defun custom-org-common-p ()
+    "Judege if current file is normal org file."
+    (and (buffer-file-name)
+         (s-suffix? ".org" (buffer-file-name))
+         (org-global-props "TITLE")))
+
+  (defun custom-common-org-drag-image (fromname)
+    "deal with drag image"
+    (let ((img-regexp "\\(gif\\|png\\|jp[e]?g\\)\\>")
+          (destname fromname))
+      (when (and (string-match img-regexp fromname) (custom-org-common-p))
+        (let* ((filebasename (file-name-base (buffer-file-name)))
+               (dirname (file-name-directory (buffer-file-name)))
+               (file-exists (lambda (name)
+                              (let ((abspath (format "%s%s" dirname name)))
+                                (when (file-exists-p abspath)
+                                  abspath))))
+               (resource-dir (or (funcall file-exists "img") (funcall file-exists "res") (funcall file-exists "resource") dirname)))
+          (setq destname (concat resource-dir "/" filebasename "-"
+                                 (save-excursion (goto-char (point-min))
+                                                 (number-to-string (1+ (count-matches (format "%s-" filebasename))))) "." (file-name-extension fromname)))
+          (rename-file fromname destname t)))
+
+      (goto-char (nth 1 (event-start event)))
+      (insert (format "[[file:%s]]" (file-relative-name destname (file-name-directory (buffer-file-name)))))))
+#+END_SRC
+* packages
+** calfw-org
+#+BEGIN_SRC emacs-lisp
+  (require-package 'calfw)
+  (require-package 'calfw-org)
+  (require 'calfw-org)
+  (setq cfw:org-overwrite-default-keybinding t)
+
+  (slegetank/leader-define-key "opc" 'cfw:open-org-calendar "Calendar")
+#+END_SRC
+
+重新定义evil-mode下的键位：
+#+BEGIN_SRC emacs-lisp
+  ;; (evil-define-key 'normal cfw:org-custom-map (kbd "g") 'cfw:org-goto-date)
+  (define-key cfw:org-custom-map (kbd "j") 'next-line)
+  (define-key cfw:org-custom-map (kbd "k") 'previous-line)
+  (define-key cfw:org-custom-map (kbd "h") 'backward-char)
+  (define-key cfw:org-custom-map (kbd "l") 'forward-char)
+  (define-key cfw:org-custom-map (kbd "s-j") 'cfw:navi-next-week-command)
+  (define-key cfw:org-custom-map (kbd "s-k") 'cfw:navi-previous-week-command)
+  (define-key cfw:org-custom-map (kbd "s-h") 'cfw:navi-previous-day-command)
+  (define-key cfw:org-custom-map (kbd "s-l") 'cfw:navi-next-day-command)
+  (define-key cfw:org-custom-map (kbd "g") 'cfw:org-goto-date)
+  (define-key cfw:org-custom-map (kbd "a") 'cfw:org-open-agenda-day)
+  (define-key cfw:org-custom-map (kbd "w") 'cfw:change-view-week)
+  (define-key cfw:org-custom-map (kbd "m") 'cfw:change-view-month)
+  (define-key cfw:org-custom-map (kbd "SPC") nil)
+#+END_SRC
+** pomodoro
+#+BEGIN_SRC emacs-lisp
+  (require-package 'org-pomodoro)
+  (slegetank/leader-define-key "opp" 'org-pomodoro "Pomodoro")
+#+END_SRC
+** org-tree-slide
+#+BEGIN_SRC emacs-lisp
+  (require-package 'org-tree-slide)
+#+END_SRC
+** polymode
+#+BEGIN_SRC elisp
+  (require-package 'polymode)
+  (require-package 'poly-org)
+#+END_SRC
+* keys
+#+BEGIN_SRC emacs-lisp
+  (defun my-org-config ()
+    (local-set-key (kbd "s-k") 'outline-previous-visible-heading)
+    (local-set-key (kbd "s-j") 'outline-next-visible-heading)
+    (local-set-key (kbd "<s-return>") 'org-meta-return)
+    )
+
+  (add-hook 'org-mode-hook 'my-org-config)
+
+#+END_SRC

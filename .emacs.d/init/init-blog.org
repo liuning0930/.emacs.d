@@ -1,0 +1,457 @@
+* Constants
+首先定义常量：
+#+BEGIN_SRC emacs-lisp
+  (setq slegetank/blog-post-base "~/Work/github/MyBlogOrg") ; 源文件路径
+  (setq slegetank/blog-publish-base  "~/Work/github/slegetank.github.io") ; 博客生成路径
+  (setq slegetank/blog-publish-base-2  "~/Work/tencent/blog") ; 博客生成路径2
+#+END_SRC
+
+* Main
+定义一些导出时要用到的变量及函数：
+#+BEGIN_SRC emacs-lisp
+  (defun slegetank/blog-home-header (arg)
+    "插入到每个生成的网页的头部"
+    (with-temp-buffer
+      (insert-file-contents (concat slegetank/blog-post-base "/template/homeheader.html"))
+      (buffer-string)))
+
+  (defun slegetank/blog-header (arg)
+    "插入到每个生成的网页的头部"
+    (with-temp-buffer
+      (insert-file-contents (concat slegetank/blog-post-base "/template/header.html"))
+      (buffer-string)))
+
+  ;; 插入到每个生成的网页的尾部
+  (setq slegetank/blog-footer
+        "<hr />\n
+                  <p>License: <a href= \"https://creativecommons.org/licenses/by-sa/4.0/\">CC BY-SA 4.0</a></p>\n
+                  <p><a href= \"mailto:slegetank@163.com\"> Contact</a></p>\n")
+#+END_SRC
+
+导出参数的配置：
+#+BEGIN_SRC emacs-lisp
+  (require 'ox-html)
+  (require 'ox-publish)
+  (require 'ox-extra)
+  (ox-extras-activate '(ignore-headlines))
+
+  (setq org-publish-project-alist
+        `(
+          ("blog-home"
+           :base-directory ,slegetank/blog-post-base
+           :base-extension "org"
+           :publishing-directory ,slegetank/blog-publish-base
+           :publishing-function (org-html-publish-to-html)
+           :with-author t
+           :with-creator nil
+           :sitemap-filename "index.org"
+           ;; :sitemap-title "index"
+           :sitemap-sort-files anti-chronologically
+           :html-preamble slegetank/blog-home-header
+           :html-postamble ,slegetank/blog-footer
+           :auto-sitemap nil
+           :sitemap-function slegetank/blog-sitemap
+           :recursive t
+           :section-numbers nil
+           :with-toc nil
+           :with-drawers t
+           :html-head-include-default-style nil
+           :html-head-include-scripts nil
+           ;; :html-link-home "/"
+           :html-head nil ;; cleans up anything that would have been in there.
+           :html-head-include-default-style nil
+           :html-head-include-scripts nil
+           :html-viewport nil
+           :with-sub-superscript nil
+           :exclude "blog/*.*\\|README.org\\|draft/*.*"
+           )
+          ("blog-static"
+           :base-directory ,(concat slegetank/blog-post-base "/static")
+           :base-extension "gif\\|png\\|jpg\\|css"
+           :auto-sitemap nil
+           :publishing-directory ,(concat slegetank/blog-publish-base "/static")
+           :recursive t
+           :publishing-function org-publish-attachment)
+          ("blog"
+           :components ("blog-home" "blog-content" "blog-static"))))
+#+END_SRC
+
+* Export
+** variables
+不必重新publish的文件列表
+#+BEGIN_SRC emacs-lisp
+  (setq slegetank/exclude-blog-files '())
+#+END_SRC
+
+** Keys
+#+BEGIN_SRC emacs-lisp
+  (slegetank/leader-define-key
+                               "bl" nil "Blog"
+                               "blc" 'slegetank/blog-commit "Org-publish & git commit"
+                               "bli" 'slegetank/blog-init "Blog init"
+                               "blf" 'slegetank/blog-finish-draft "Finish draft"
+                               "bld" 'slegetank/blog-deploy-to-remote "Push to static blog")
+#+END_SRC
+
+** Functions
+自定义获取博客预览内容的函数，即一个"#+BEGIN_COMMENT PREVIEW...#+END_COMMENT"块之间的内容。用comment块的原因是这些内容将会在org导出的时候被忽略掉：
+#+BEGIN_SRC emacs-lisp
+  (defun my-blog-get-custom-property (file)
+    "获得每篇博客的自定义属性"
+    (let* ((org-inhibit-startup t)
+           (tempbuffer (find-file file))
+           (preview-str "")
+           (type "")
+           (title "")
+           (date ""))
+
+      (with-current-buffer tempbuffer
+        ;; preview
+        (goto-char (point-min))
+        (when (re-search-forward "^#\\+BEGIN_COMMENT PREVIEW$" nil t)
+          (goto-char (point-min))
+          (let ((beg (+ 1 (re-search-forward "^#\\+BEGIN_COMMENT PREVIEW$")))
+                (end (progn (re-search-forward "^#\\+END_COMMENT")
+                            (match-beginning 0))))
+
+            (setq preview-str (buffer-substring beg end))))
+        ;; property
+        (let ((org-properties (org-element-map (org-element-parse-buffer 'element) 'keyword
+                                (lambda (keyword) (cons (org-element-property :key keyword)
+                                                        (org-element-property :value keyword))))))
+          (setq type (or (cdr (assoc "BLOGTYPE" org-properties)) ""))
+          (setq title (or (cdr (assoc "TITLE" org-properties)) ""))
+          (setq date (or (cdr (assoc "DATE" org-properties)) "")))
+
+        (kill-buffer tempbuffer))
+
+      `(("preview" . ,preview-str) ("type" . ,type) ("title" . ,title) ("date" . ,date))))
+#+END_SRC
+
+读取目录下博客org文件的信息：
+#+BEGIN_SRC emacs-lisp
+  (defun slegetank/blog-org-files-info ()
+    "Generate info list for org files"
+    (let* ((files (directory-files (concat slegetank/blog-post-base "/blog/") t ".org$"))
+           (postdir (file-name-as-directory slegetank/blog-post-base))
+           file
+           (infolist '()) ;; 每个文件的属性信息
+           (cached-file-names '()) ;; 之前缓存过的文件信息，且未发生改变，因此不用重新生成
+           (cache-properties (slegetank/read-var-from-file (concat slegetank/blog-post-base "/cache-properties"))))
+      (while (setq file (pop files))
+        (unless (or (s-ends-with? "index.org" (file-truename file)) (s-ends-with? "archive.org" (file-truename file)) (s-ends-with? "tag.org" (file-truename file)))
+          (let ((link (file-relative-name file (file-name-as-directory
+                                                (expand-file-name (file-name-as-directory postdir)))))
+                (cache-property (car (alist-get (file-name-nondirectory file) cache-properties nil nil 'equal))))
+            (let* (
+                   ;; 缓存文件里不存在，则读取真实文件的信息
+                   (properties (or cache-property (my-blog-get-custom-property file)))
+                   (title (cdr (assoc "title" properties)))
+                   (date (cdr (assoc "date" properties)))
+                   (preview (cdr (assoc "preview" properties)))
+                   (type (cdr (assoc "type" properties)))
+                   (cache-md5 (cdr (assoc "md5" properties)))
+                   (md5 (substring (shell-command-to-string (format "md5 -q %s" file)) 0 -1))
+                   (content `(("link" . ,(or link "")) ("title" . ,(or title "")) ("date" . ,(or date "")) ("preview" . ,(or preview "")) ("type" . ,(or type "")) ("md5" . ,md5))))
+              ;; 缓存信息不存在，或者信息与最新的文件不同，将新文件的信息加入到缓存列表里
+              (if (or (not cache-property) (not (equal cache-md5 md5)))
+                  (add-to-list 'cache-properties `(,(file-name-nondirectory file) . ,(list content)))
+                (add-to-list 'cached-file-names (file-name-nondirectory file)))
+              (setq infolist (cons content infolist))))))
+      (slegetank/dump-var-to-file cache-properties (concat slegetank/blog-post-base "/cache-properties"))
+      (cons infolist cached-file-names)))
+#+END_SRC
+
+自定义sitemap生成函数：
+#+BEGIN_SRC emacs-lisp
+  (defun slegetank/blog-sitemap (&rest params)
+    "Sitemap custom method；返回不需要重新publish的文件列表"
+    (let* ((postdir (file-name-as-directory slegetank/blog-post-base))
+           (sitemap-filename (concat postdir "index.org"))
+           (visiting (find-buffer-visiting sitemap-filename))
+           (files-info (slegetank/blog-org-files-info))
+           (bloginfos (car files-info))
+           (regexp "\\(.*\\)\\[\\([^][]+\\)\\]\\(.*\\)")
+           sitemap-buffer)
+      ;; 不必重新publish的文件列表
+      (setq slegetank/exclude-blog-files (cdr files-info))
+      (my-blog-archive bloginfos)
+      (let ((org-inhibit-startup t))
+        (setq sitemap-buffer
+              (or visiting (find-file sitemap-filename)))
+        (with-current-buffer sitemap-buffer
+          (erase-buffer)
+
+          (while (setq bloginfo (pop bloginfos))
+            (let* ((link (cdr (assoc "link" bloginfo)))
+                   (title (cdr (assoc "title" bloginfo)))
+                   (date (cdr (assoc "date" bloginfo)))
+                   (preview (cdr (assoc "preview" bloginfo)))
+                   (type (cdr (assoc "type" bloginfo))))
+
+              (insert "-----\n")
+              (cond ((string-match-p regexp title)
+                     (string-match regexp title)
+                     ;; insert every post as headline
+                     (insert (concat"* " (match-string 1 title)
+                                    "[[file:" link "]["
+                                    (match-string 2 title)
+                                    "]]" (match-string 3 title) "\n")))
+                    (t (insert (concat "* [[file:" link "][" title "]]\n"))))
+              (let ((rss-permalink (concat (file-name-sans-extension link) ".html"))
+                    (rss-pubdate date))
+                (org-set-property "RSS_PERMALINK" rss-permalink)
+                (org-set-property "PUBDATE" rss-pubdate))
+
+              (insert (format "%s | %s\n\n" date type))
+              (insert preview)
+              (insert (concat "[[file:" link "][Read More...]]\n"))))
+
+          ;; kill the first hrule to make this look OK
+          (goto-char (point-min))
+          (let ((kill-whole-line t)) (kill-line))
+          ;; add some header
+          (insert "#+SETUPFILE: ~/.emacs.d/org-template/level-0.org\n")
+          (insert "#+TITLE:Slegetank's Blog\n")
+          (insert "#+HTML_HEAD: <style type=\"text/css\">.title{display:none;}</style>\n\n")
+          (save-buffer)))
+      (or visiting (kill-buffer sitemap-buffer))))
+#+END_SRC
+
+自定义archive生成函数：
+#+BEGIN_SRC emacs-lisp
+  (defun my-blog-archive (bloginfos)
+    "Archive custom method"
+    (let* ((postdir (file-name-as-directory slegetank/blog-post-base))
+           (regexp "\\(.*\\)\\[\\([^][]+\\)\\]\\(.*\\)")
+           archive-buffer
+           typelist '()
+           datelist '())
+
+      (dotimes (index (length bloginfos) nil)
+        (let* ((bloginfo (car (nthcdr index bloginfos)))
+               (date (cdr (assoc "date" bloginfo)))
+               (year (car (s-split-words date)))
+               (type (cdr (assoc "type" bloginfo))))
+
+          (let ((yearlist (assoc year datelist)))
+            (if yearlist
+                (progn (setq datelist (delq (assoc year datelist) datelist))
+                       (add-to-list 'datelist `(,year . ,(cons index (cdr yearlist)))))
+              (setq datelist (acons year (cons index '()) datelist))))
+
+          (let ((templist (assoc type typelist)))
+            (if templist
+                (progn (setq typelist (delq (assoc type typelist) typelist))
+                       (add-to-list 'typelist `(,type . ,(cons index (cdr templist)))))
+              (setq typelist (acons type (cons index '()) typelist))))
+          ))
+
+      (let ((org-inhibit-startup t))
+        (with-current-buffer (find-file (concat postdir "archive.org"))
+          (erase-buffer)
+
+          (dolist (year (reverse datelist) nil)
+            (insert "\n")
+            (insert (concat "* " (car year)))
+            (insert "\n")
+            (dolist (index (reverse (cdr year)) nil)
+              (let* ((bloginfo (car (nthcdr index bloginfos)))
+                     (title (cdr (assoc "title" bloginfo)))
+                     (date (cdr (assoc "date" bloginfo)))
+                     (link (cdr (assoc "link" bloginfo))))
+                (cond ((string-match-p regexp title)
+                       (string-match regexp title)
+                       (insert (concat"** " (match-string 1 title)
+                                      "[[file:" link "]["
+                                      (match-string 2 title)
+                                      "]]" (match-string 3 title) "\n")))
+                      (t (insert (concat "** [[file:" link "][" date " " title "]]\n"))))
+                )))
+
+          (goto-char (point-min))
+          (let ((kill-whole-line t)) (kill-line))
+          (insert "#+SETUPFILE: ~/.emacs.d/org-template/level-0.org\n")
+          (insert "#+TITLE:Slegetank's Blog\n")
+          (insert "#+HTML_HEAD: <style type=\"text/css\">.title{display:none;}</style>\n\n")
+          (save-buffer)
+          (kill-buffer)))
+
+      (let ((org-inhibit-startup t))
+        (with-current-buffer (find-file (concat postdir "tag.org"))
+          (erase-buffer)
+
+          (dolist (type (reverse typelist) nil)
+            (insert "\n")
+            (insert (concat "* " (car type)))
+            (insert "\n")
+            (dolist (index (reverse (cdr type)) nil)
+              (let* ((bloginfo (car (nthcdr index bloginfos)))
+                     (title (cdr (assoc "title" bloginfo)))
+                     (date (cdr (assoc "date" bloginfo)))
+                     (link (cdr (assoc "link" bloginfo))))
+                (cond ((string-match-p regexp title)
+                       (string-match regexp title)
+                       (insert (concat"** " (match-string 1 title)
+                                      "[[file:" link "]["
+                                      (match-string 2 title)
+                                      "]]" (match-string 3 title) "\n")))
+                      (t (insert (concat "** [[file:" link "][" date " " title "]]\n"))))
+                )))
+
+          (goto-char (point-min))
+          (let ((kill-whole-line t)) (kill-line))
+          (insert "#+SETUPFILE: ~/.emacs.d/org-template/level-0.org\n")
+          (insert "#+TITLE:Slegetank's Blog\n")
+          (insert "#+HTML_HEAD: <style type=\"text/css\">.title{display:none;}</style>\n\n")
+          (save-buffer)
+          (kill-buffer)))
+      ))
+#+END_SRC
+
+* Edit
+** Functions
+自定义时间戳更新方法：
+#+BEGIN_SRC emacs-lisp
+  (defun slegetank/blog-timestamp-update ()
+    (interactive)
+    (with-current-buffer (current-buffer)
+      (goto-char (point-min))
+      (search-forward-regexp "^#\\+DATE:.*?$")
+      (replace-match (concat "#+DATE: " (format-time-string "<%Y-%m-%d %H:%M>")))
+      (save-buffer)))
+#+END_SRC
+
+自定义修改博客type的方法：
+#+BEGIN_SRC emacs-lisp
+  (defun slegetank/blog-type-update ()
+    "Update blog's type"
+    (interactive)
+    (let* ((blogtypes (with-temp-buffer
+                        (insert-file-contents (expand-file-name "blogtype" slegetank/blog-post-base))
+                        (split-string (buffer-string) "\n" t)))
+           (blogtype (ivy-completing-read "Select article type: " blogtypes nil t)))
+      (with-current-buffer (current-buffer)
+        (goto-char (point-min))
+        (search-forward-regexp "^#\\+blogtype:.*?$")
+        (replace-match (concat "#+blogtype: " blogtype))
+        (save-buffer))))
+#+END_SRC
+
+判断是否为博客org文件：
+#+BEGIN_SRC emacs-lisp
+    (defun slegetank/org-blog-p ()
+      "Judege if current file is blog file"
+      (and (buffer-file-name)
+           (or (s-suffix? "/draft/" (file-name-directory (buffer-file-name)))
+               (s-suffix? "/blog/" (file-name-directory (buffer-file-name))))
+           (s-suffix? ".org" (buffer-file-name))))
+#+END_SRC
+
+自定义用来帮助新建文章模板的helper函数：
+#+BEGIN_SRC emacs-lisp
+  (defun slegetank/blog-init (filename)
+    "Init blog helper"
+    (interactive (list (read-string (format "Enter new blog name: %s%s-" (concat slegetank/blog-post-base "/draft/") (format-time-string "%Y%m%d" (current-time))))))
+    (if (string= "" filename)
+        (message "Need a filename")
+      (or (string-match "\\.org$" filename) (setq filename (concat (file-name-sans-extension filename) ".org")))
+      (progn (setq filepath (format "%s%s-%s" (concat slegetank/blog-post-base "/draft/") (format-time-string "%Y%m%d" (current-time)) filename))
+       (find-file filepath)
+       (let ((custom-org-buffer (get-file-buffer filepath)))
+         (with-current-buffer custom-org-buffer
+           (insert (format "#+TITLE: \n#+AUTHOR: slegetank\n#+EMAIL: slege_tank@163.com\n#+DATE: %s\n#+SETUPFILE: ~/.emacs.d/org-template/level-1.org\n#+blogtype: \n\n#+BEGIN_COMMENT PREVIEW\n\n#+END_COMMENT\n" (format-time-string "<%Y-%m-%d %H:%M>" (current-time))))
+           (goto-char 9))))))
+#+END_SRC
+
+自定义草稿发布函数：
+#+BEGIN_SRC emacs-lisp
+  (defun slegetank/blog-finish-draft ()
+    (interactive)
+    (if (slegetank/org-blog-p)
+        (progn (dired-rename-file (buffer-file-name) (concat slegetank/blog-post-base "/blog/" (file-name-nondirectory (buffer-file-name))) 1)
+               (if (y-or-n-p "File move finished. Need to commit?")
+                   (slegetank/blog-commit)
+                 (message "\"%s\" publish finished." (buffer-file-name))))
+      (message "\"%s\" is not a valid draft blog file." (buffer-file-name))))
+#+END_SRC
+
+自定义部署函数：
+#+BEGIN_SRC emacs-lisp
+  (defun slegetank/blog-deploy-to-remote ()
+    "Update github.io & slegetank.com's blog"
+    (interactive)
+    (let ((default-directory slegetank/blog-publish-base))
+      (message "push to blog1...")
+      (shell-command "git push"))
+    (let ((default-directory slegetank/blog-publish-base-2))
+      (message "push to blog2...")
+      (shell-command "git push")
+      (message "Update blog success.")
+      (browse-url "https://dev.tencent.com/u/slegetank/p/blog/git/pages/settings")))
+
+#+END_SRC
+
+自定义插入图片链接函数：
+#+BEGIN_SRC emacs-lisp
+  (defun slegetank/blog-drag-image (fromname)
+    "deal with drag image"
+    (let ((img-regexp "\\(gif\\|png\\|jp[e]?g\\)\\>")
+          (destname fromname))
+      (when (and (string-match img-regexp fromname) (slegetank/org-blog-p))
+        (let ((filebasename (file-name-base (buffer-file-name))))
+          (setq destname (concat slegetank/blog-post-base "/static/" filebasename "-" (progn (goto-char (point-min)) (number-to-string (count-matches (format "%s-" filebasename)))) "." (file-name-extension fromname)))
+          (rename-file fromname destname t)))
+
+      (goto-char (nth 1 (event-start event)))
+      (insert (format "[[file:%s]]" (file-relative-name destname (file-name-directory (buffer-file-name)))))))
+#+END_SRC
+
+自定义用来更新remote博客的函数：
+#+BEGIN_SRC emacs-lisp
+  (defun slegetank/blog-commit ()
+    "add commit push"
+    (interactive)
+    (slegetank/blog-sitemap nil)
+    (add-to-list 'org-publish-project-alist `("blog-content"
+                                              :base-directory ,(concat slegetank/blog-post-base "/blog")
+                                              :base-extension "org"
+                                              :publishing-directory ,(concat slegetank/blog-publish-base "/blog")
+                                              :publishing-function (org-html-publish-to-html)
+                                              :with-author t
+                                              :with-creator nil
+                                              :html-preamble slegetank/blog-header
+                                              :html-postamble ,slegetank/blog-footer
+                                              :auto-sitemap nil
+                                              :recursive t
+                                              :section-numbers nil
+                                              :with-toc nil
+                                              :with-drawers t
+                                              :html-head-include-default-style nil
+                                              :html-head-include-scripts nil
+                                              ;; :html-link-home "/"
+                                              :html-head nil ;; cleans up anything that would have been in there.
+                                              :html-head-include-default-style nil
+                                              :html-head-include-scripts nil
+                                              :html-viewport nil
+                                              :with-sub-superscript nil
+                                              :exclude ,(and slegetank/exclude-blog-files (s-join "\\|" slegetank/exclude-blog-files))
+                                              ))
+    (org-publish "blog" t)
+    ;; to github
+    (let ((default-directory slegetank/blog-publish-base))
+      (shell-command "git add .")
+      (shell-command (format "git commit -m \"Blog updated: %s\"" (format-time-string "%Y-%m-%d %H:%M:%S" (current-time)))))
+
+    ;; to tencent
+    (let ((default-directory slegetank/blog-publish-base-2))
+      (shell-command-to-string (format "rsync -av --exclude=\".*\" %s/* %s" slegetank/blog-publish-base slegetank/blog-publish-base-2))
+      (shell-command "git add .")
+      (shell-command (format "git commit -m \"Blog updated: %s\"" (format-time-string "%Y-%m-%d %H:%M:%S" (current-time))))))
+
+#+END_SRC
+** Keys
+#+BEGIN_SRC emacs-lisp
+    (slegetank/leader-define-key "blu" 'slegetank/blog-timestamp-update "Update timestamp"
+                                 "blt" 'slegetank/blog-type-update "Update type")
+#+END_SRC

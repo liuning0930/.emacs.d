@@ -1,0 +1,18 @@
+# -*- mode: snippet -*-
+# name: React Native Create Class
+# key: rncc
+# --
+class $0 extends React.Component {
+    constructor(props) {
+        super(props);
+
+        this.state = {};
+    }
+
+    render() {
+        return (
+            <View>
+            </View>
+        );
+    }
+}

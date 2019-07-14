@@ -1,0 +1,197 @@
+Evil genius!
+Make Emacs's keymap more convenient for me.
+
+manual: https://bytebucket.org/lyro/evil/raw/default/doc/evil.pdf
+
+* evil
+#+BEGIN_SRC emacs-lisp
+  ;; (setq evil-want-integration nil)
+  (require-package 'evil)
+#+END_SRC
+* package
+** which-key
+evil-leader配上which-key 效果非常棒
+#+BEGIN_SRC emacs-lisp
+  (require-package 'which-key)
+  (which-key-mode 1)
+  (setq which-key-side-window-max-height 0.25)
+  (setq which-key-idle-delay 0.3)
+  ;; (which-key-add-key-based-replacements
+  ;;   "<SPC>f" "File"
+  ;;   "<SPC>d" "Directory"
+  ;;   "<SPC>b" "Buffer"
+  ;;   "<SPC>bl" "Blog"
+  ;;   )
+
+#+END_SRC
+** evil-leader
+快捷键
+M-x customize-group -> 默认触发为\，改为SPC
+#+BEGIN_SRC emacs-lisp
+  (require-package 'evil-leader)
+  (require 'evil-leader)
+
+  (setq evil-leader/in-all-states t)
+  (setq evil-leader/leader "SPC")
+  (global-evil-leader-mode)
+  (evil-mode t)
+  (setq evil-leader/no-prefix-mode-rx '("w3m.*-mode" "cfw:calendar-mode" "bookmark-bmenu-mode")) ; w3m mode needs this too!
+
+  (defun slegetank/leader-define-key (key def desc &rest seq)
+    "Custom method to define key and add comment to which-key."
+    (let ((map evil-leader--default-map)
+          (fkey (concat "<SPC>" key))
+          (fdesc desc)
+          keyDescList)
+      (while key
+        (when def
+          (define-key map key def))
+        (setq key (pop seq)
+              def (pop seq)
+              desc (pop seq))
+        (when key
+          (push desc keyDescList)
+          (push (concat "<SPC>" key) keyDescList)))
+      (apply 'which-key-add-key-based-replacements fkey fdesc keyDescList)))
+
+  (defun slegetank/repeat-last-command ()
+    "Custom repeat last command."
+    (interactive)
+    (let ((lastcommand nil)
+          (tempcommand nil))
+      (when (/= 0 (length command-history))
+        (setq tempcommand command-history)
+        (while (and (not lastcommand) tempcommand)
+          (if (where-is-internal (caar tempcommand) evil-leader--default-map)
+              (setq lastcommand (caar tempcommand))
+            (setq tempcommand (cdr tempcommand)))))
+      (when lastcommand
+        (call-interactively lastcommand))))
+
+  (slegetank/leader-define-key "f" nil "Files"
+                               "ff" 'counsel-find-file "Find file"
+                               "fl" 'find-file-literally "Find large file"
+                               "b" nil "Buffers"
+                               "bb" 'ivy-switch-buffer "Switch buffer"
+                               "bk" 'kill-buffer "Kill buffer"
+                               "bm" nil "Bookmark"
+                               "bo" 'ivy-switch-buffer-other-window "Switch buffer in other window"
+                               "bB" 'ivy-switch-buffer-other-window "Switch buffer in other window"
+                               "bc" 'slegetank/clear-message-buffer "Clear message buffer"
+                               "bmm" 'bookmark-set "Bookmark set"
+                               "bml" 'bookmark-bmenu-list "Bookmark list"
+                               "bmj" 'counsel-bookmark "Bookmark jump"
+                               "e" nil "elisp"
+                               "er" 'eval-region "Eval region"
+                               "eb" 'eval-buffer "Eval buffer"
+                               "." 'slegetank/repeat-last-command "Repeat")
+
+  ;; q for kill-buffer, not for exit emacss
+  (evil-ex-define-cmd "q" (lambda () (interactive) (kill-buffer (current-buffer))))
+  ;; wq for save & kill-buffer, not for exit emacss
+  (evil-ex-define-cmd "wq" (lambda () (interactive) (save-buffer) (kill-buffer (current-buffer))))
+#+END_SRC
+
+忽略C-z的emacs mode:
+#+BEGIN_SRC emacs-lisp
+  (evil-define-key '(normal insert visual replace operator motion) 'global (kbd "C-z") 'undo-tree-undo)
+#+END_SRC
+** evil-collection
+#+BEGIN_SRC emacs-lisp
+  ;; (require-package 'evil-collection)
+  ;; (require 'evil-collection)
+  ;; ;; (evil-collection-init)
+
+  ;; (evil-collection-init 'notmuch)
+#+END_SRC
+** evil-nerd-commenter
+注释
+#+BEGIN_SRC emacs-lisp
+  (require-package 'evil-nerd-commenter)
+
+  (evilnc-default-hotkeys)
+  (global-set-key (kbd "s-/") 'evilnc-comment-or-uncomment-lines)
+#+END_SRC
+
+** evil-surround
+#+BEGIN_SRC emacs-lisp
+  (require-package 'evil-surround)
+
+  (global-evil-surround-mode 1)
+#+END_SRC
+
+** evil-matchit
+#+BEGIN_SRC emacs-lisp
+  (require-package 'evil-matchit)
+  (global-evil-matchit-mode 1)
+  (add-hook 'dired-mode-hook (lambda ()
+                               "dired不需要这个功能"
+                               (turn-off-evil-matchit-mode)))
+#+END_SRC
+
+** evil-visualstar
+#+BEGIN_SRC emacs-lisp
+  (require-package 'evil-visualstar)
+  (global-evil-visualstar-mode)
+#+END_SRC
+
+** evil-cleverparens
+#+BEGIN_SRC emacs-lisp
+  (require-package 'evil-cleverparens)
+
+  (add-hook 'emacs-lisp-mode-hook #'evil-cleverparens-mode)
+  (add-hook 'lisp-mode-hook #'evil-cleverparens-mode)
+  (setq evil-move-beyond-eol t)
+
+  (define-key evil-visual-state-map [escape] 'evil-visual-char)
+#+END_SRC
+
+** expand-region
+多次按v自动选择：
+#+BEGIN_SRC emacs-lisp
+  (require-package 'expand-region)
+  (require 'expand-region)
+
+  (defun evil-visual-char-or-expand-region ()
+    (interactive)
+    (if (region-active-p)
+        (call-interactively 'er/expand-region)
+      (evil-visual-char)))
+
+  (define-key evil-normal-state-map "v" 'evil-visual-char-or-expand-region)
+  (define-key evil-visual-state-map "v" 'evil-visual-char-or-expand-region)
+#+END_SRC
+
+* other
+** select last paste text
+在simpleclip处有更统一的处理；如果只用evil则可以打开。
+#+BEGIN_SRC emacs-lisp
+  ;; (defun slegetank/evil-select-pasted ()
+  ;;   "Visually select last pasted text."
+  ;;   (interactive)
+  ;;   (evil-goto-mark ?[)
+  ;;                   (evil-visual-char)
+  ;;                   (evil-goto-mark ?]))
+
+  ;; (slegetank/leader-define-key "gp" 'slegetank/evil-select-pasted "Select last paste word")
+#+END_SRC
+** [macos] auto switch input source
+当进入evil-normal-mode时，自动切换回英文输入法；由于某些未知原因，中文输入法的切换并不能马上生效，必须deactive再focus才可以，所以这里不做此功能。可以考虑emacs内置的输入法来解决这个问题。
+首先下载配置：https://github.com/Lutzifer/keyboardSwitcher
+#+BEGIN_SRC emacs-lisp
+  ;; (when (and (equal system-type 'darwin)
+  ;;            (executable-find "keyboardSwitcher"))
+  ;;   (let ((temp-text (shell-command-to-string "keyboardSwitcher enabled")))
+  ;;     (if (s-contains? "ABC" temp-text)
+  ;;         (setq slegetank/en-input-source "ABC")
+  ;;       (setq slegetank/en-input-source "U.S.")))
+
+  ;;   (add-hook 'evil-normal-state-entry-hook
+  ;;             (lambda ()
+  ;;               (call-process-shell-command (format "keyboardSwitcher select %s" slegetank/en-input-source) nil 0)))
+
+  ;;   (add-hook 'focus-in-hook (lambda ()
+  ;;                              "When focus on emacs, if state is normal, change input method to english"
+  ;;                              (when (equal evil-state 'normal)
+  ;;                                (call-process-shell-command (format "keyboardSwitcher select %s" slegetank/en-input-source) nil 0)))))
+#+END_SRC

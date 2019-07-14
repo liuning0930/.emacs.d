@@ -1,0 +1,176 @@
+* packages
+projectile是ag在EMACS中的前端配置包，counsel是ivy对它的进一步封装。在此之前，请先安装https://github.com/ggreer/the_silver_searcher ；在mac上也就是brew install the_silver_searcher。
+** counsel-projectile
+#+BEGIN_SRC emacs-lisp
+  (require-package 'counsel-projectile)
+  (require 'counsel-projectile)
+  (add-to-list 'grep-find-ignored-files "bundle.js")
+  (counsel-projectile-mode)
+  (setq projectile-require-project-root nil)
+  (setq projectile-enable-caching t)
+  ;; (setq-default
+  ;;    projectile-mode-line
+  ;;    '(:eval
+  ;;      (if (file-remote-p default-directory)
+  ;;          " Proj"
+  ;;        (format " Proj[%s]" (projectile-project-name)))))
+#+END_SRC
+** neotree
+工程浏览的侧边栏
+#+BEGIN_SRC emacs-lisp
+  (require-package 'neotree)
+  (require 'neotree)
+  (use-package neotree
+    :ensure t
+    :config
+    (slegetank/leader-define-key "dn" 'custom-neotree-toggle-project-dir "Neotree")
+
+    (setq neo-smart-open t)
+    (setq neo-window-fixed-size nil)
+    (setq neo-force-change-root t)
+    (setq projectile-switch-project-action 'neotree-projectile-action)
+
+  (setq neo-hidden-regexp-list '("^\\." "\\.cs\\.meta$" "\\.pyc$" "~$" "^#.*#$" "\\.elc$" "*_flymake.py$"))
+
+  (add-hook 'neotree-mode-hook
+            (lambda ()
+              (define-key evil-normal-state-local-map (kbd "<tab>") (neotree-make-executor :dir-fn 'neo-open-dir))
+              (define-key evil-normal-state-local-map (kbd "u") 'neotree-select-up-node)
+              (define-key evil-normal-state-local-map (kbd "v") 'neotree-quick-look)
+              (define-key evil-normal-state-local-map (kbd "q") 'neotree-hide)
+              (define-key evil-normal-state-local-map (kbd "a") 'neotree-hidden-file-toggle)
+              (define-key evil-normal-state-local-map (kbd "]") 'neotree-stretch-toggle)
+              (define-key evil-normal-state-local-map (kbd "g") 'neotree-refresh)
+              (define-key evil-normal-state-local-map (kbd "r") 'neotree-rename-node)
+              (define-key evil-normal-state-local-map (kbd "c") 'neotree-create-node)
+              (define-key evil-normal-state-local-map (kbd "d") 'neotree-delete-node)
+              (define-key evil-normal-state-local-map (kbd "o") (lambda () (interactive) (shell-command (format "open %s" (neo-buffer--get-filename-current-line)))))
+              (define-key evil-normal-state-local-map (kbd "s-j") 'neotree-select-next-sibling-node)
+              (define-key evil-normal-state-local-map (kbd "s-k") 'neotree-select-previous-sibling-node)
+
+              (define-key evil-normal-state-local-map (kbd "<s-return>") 'neotree-enter-vertical-split)
+
+              (define-key evil-normal-state-local-map (kbd "RET") 'neotree-enter))))
+
+  (use-package find-file-in-project :ensure t)
+
+  (defun custom-neotree-toggle-project-dir ()
+    "Open NeoTree using the git root. & show imenu"
+    (interactive)
+    ;; (imenu-list-smart-toggle)
+    (if (neo-global--window-exists-p)
+        (progn (neotree-hide)
+               ;; (imenu-list-quit-window)
+               )
+      (let ((project-dir (or (ffip-project-root) (file-name-directory (or (buffer-file-name) ""))))
+            (file-name (buffer-file-name)))
+        ;; (imenu-list-show)
+        (if project-dir
+            (progn
+              (neotree-dir project-dir)
+              (neotree-find file-name))
+          (message "Buffer is invalid.")))))
+#+END_SRC
+
+*** autorefresh
+自动刷新 不知道为什么neotree自动刷新间隔为2s。自定义之
+#+BEGIN_SRC emacs-lisp
+  (setq neo-autorefresh t)
+  (defvar slegetank/last-neotree-refresh-buffer-file nil
+    "Store the last refresh's neotree's buffer file name")
+
+  (defun slegetank/neo-auto-refresh (window)
+    "NeoTree's autorefresh interval is too long. Only refresh when the buffer is a file buffer and not ends with ]"
+    (when neo-global--autorefresh-timer
+      (cancel-timer neo-global--autorefresh-timer))
+    (when neo-autorefresh
+      (setq neo-global--autorefresh-timer
+            (run-with-idle-timer 0.5 t (lambda ()
+                                         (interactive)
+                                         (let ((buffer-filename (buffer-file-name)))
+                                           (when (and buffer-filename
+                                                      (neo-global--window-exists-p)
+                                                      (not (s-ends-with? "]" buffer-filename))
+                                                      (not (equal slegetank/last-neotree-refresh-buffer-file buffer-filename)))
+                                             (setq slegetank/last-neotree-refresh-buffer-file buffer-filename)
+                                             (neotree-refresh t))))))))
+
+  (add-hook 'neo-after-create-hook 'slegetank/neo-auto-refresh)
+#+END_SRC
+
+*** collapse all
+折叠除当前文件外的所有文件夹：
+#+BEGIN_SRC emacs-lisp
+  (defun slegetank/neotree-collapse-all ()
+    (interactive)
+    "Collapse all"
+    (neo-global--select-window)
+    (let ((filename (neo-buffer--get-filename-current-line)))
+      (setq neo-buffer--expanded-node-list nil)
+      (neotree-find filename)
+      ;; (if (file-directory-p filename)
+      ;;     (neo-buffer--set-expand filename (neo-buffer--expanded-node-p filename))
+      ;;   (neotree-select-up-node))
+      ))
+
+  (add-hook 'neotree-mode-hook
+            (lambda ()
+              (define-key evil-normal-state-local-map (kbd "S-<tab>") 'slegetank/neotree-collapse-all)))
+#+END_SRC
+* custom
+counsel定义的工程搜索在git工程中默认使用.gitignore，而不是.projectile，一般情况下是可以的，但是对于webpack的工程由于bundle.js不会被忽略，但是又不想搜其中的东西，所以只好摘出来自定义了：
+#+BEGIN_SRC emacs-lisp
+  (defun slegetank/projectile-ag (&optional options)
+    "Copy from counsel, and use .projectile"
+    (interactive)
+    (let* ((options
+                (if current-prefix-arg
+                    (read-string "options: ")
+                  options))
+               (ignored
+                (append
+                 (cl-union (projectile-ignored-files-rel) grep-find-ignored-files)
+                 (cl-union (projectile-ignored-directories-rel) grep-find-ignored-directories)))
+               (options
+                (concat options " "
+                        (mapconcat (lambda (i)
+                                     (concat "--ignore " (shell-quote-argument i)))
+                                   ignored
+                                   " "))))
+          ;; -U ignore .gitignore but use .ignore
+          (counsel-ag (eval counsel-projectile-ag-initial-input)
+                      (or (projectile-project-root) default-directory)
+                      (concat options " " "-U")
+                      (projectile-prepend-project-name "ag"))))
+#+END_SRC
+* notes
+#+BEGIN_SRC emacs-lisp
+  (defun custom-note-init (filename)
+    "Init a note."
+    (interactive (list (read-string (format "Enter new note name: %s%s-" default-directory  (format-time-string "%Y%m%d" (current-time))))))
+    (if (string= "" filename)
+        (message "Need a filename")
+      (or (string-match "\\.org$" filename) (setq filename (concat (file-name-sans-extension filename) ".org")))
+      (progn (setq filepath (format "%s%s-%s" default-directory (format-time-string "%Y%m%d" (current-time)) filename))
+             (find-file filepath)
+             (let ((custom-org-buffer (get-file-buffer filepath))
+                   (user-name (s-trim-right (shell-command-to-string "git config --global user.name") ))
+                   (user-email (s-trim-right (shell-command-to-string "git config --global user.email") )))
+               (with-current-buffer custom-org-buffer
+                 (insert (format "#+OPTIONS: \\n:\\n ^:nil\n\n#+TITLE: \n#+AUTHOR: %s\n#+EMAIL: %s\n#+DATE: %s\n" user-name user-email (format-time-string "<%Y-%m-%d %H:%M>" (current-time))))
+                 (goto-char 34))))))
+#+END_SRC
+* keys
+#+BEGIN_SRC emacs-lisp
+  (slegetank/leader-define-key
+                               "p" nil "Project"
+                               "pf" 'counsel-projectile-find-file "File in project"
+                               "pb" 'counsel-projectile-switch-to-buffer "Buffer in project"
+                               "pp" 'counsel-projectile-switch-project "Other project"
+                               "pn" 'custom-note-init "Init project note file"
+                               "pc" 'projectile-invalidate-cache "Reset projectile cache of this project")
+
+  (define-key evil-motion-state-map (kbd "s-F") 'slegetank/projectile-ag)
+  (define-key global-map (kbd "s-F") 'slegetank/projectile-ag)
+#+END_SRC
+

@@ -1,0 +1,124 @@
+* multiple-cursors
+https://github.com/magnars/multiple-cursors.el
+#+BEGIN_SRC emacs-lisp
+  (require-package 'multiple-cursors)
+  (require 'multiple-cursors)
+#+END_SRC
+** evil-mc
+#+BEGIN_SRC emacs-lisp
+  (require-package 'evil-mc)
+  (require 'evil-mc)
+
+  (setq slegetank/evil-mc-pinyin-need-restore nil)
+
+  (defun slegetank/evil-mc-enable ()
+    (interactive)
+    "Enable multiple-cursors mode in evil"
+    (evil-mc-mode 1)
+    (evil-mc-make-all-cursors)
+    (message "Enter multi cursors mode."))
+
+  (defun slegetank/evil-mc-quit ()
+    (interactive)
+    "Disaable multiple-cursors mode in evil"
+    (evil-mc-mode -1)
+    (evil-mc-undo-all-cursors)
+    (when slegetank/evil-mc-pinyin-need-restore
+      (evil-find-char-pinyin-mode +1))
+    (message "Quit multi cursors mode."))
+
+  (evil-define-key 'normal evil-mc-key-map (kbd "C-g") 'slegetank/evil-mc-quit)
+  (evil-define-key 'normal evil-mc-key-map (kbd "<escape>") 'slegetank/evil-mc-quit)
+#+END_SRC
+
+evil-mc与evil-find-char-pinyin有冲突，暂时屏蔽：
+#+BEGIN_SRC emacs-lisp
+  (add-hook 'evil-mc-mode-hook (lambda ()
+                                (when (bound-and-true-p evil-find-char-pinyin-mode)
+                                  (evil-find-char-pinyin-mode -1)
+                                  (setq slegetank/evil-mc-pinyin-need-restore t))))
+#+END_SRC
+
+* grep
+#+BEGIN_SRC emacs-lisp
+  (setq-default grep-highlight-matches t
+                grep-scroll-output t)
+#+END_SRC
+
+* avy
+** avy
+#+BEGIN_SRC emacs-lisp
+  (require-package 'avy)
+  (setq avy-case-fold-search nil)
+#+END_SRC
+
+* ace-jump
+屏幕内跳转
+#+BEGIN_SRC emacs-lisp
+  (require-package 'ace-jump-mode)
+  (setq ace-jump-mode-case-fold nil)
+#+END_SRC
+* anzu
+在使用普通搜索功能时在状态栏显示匹配数目：
+#+BEGIN_SRC emacs-lisp
+  (require-package 'anzu)
+  (add-hook 'after-init-hook 'global-anzu-mode)
+  (setq anzu-mode-lighter "")
+  (global-set-key [remap query-replace-regexp] 'anzu-query-replace-regexp)
+  (global-set-key [remap query-replace] 'anzu-query-replace)
+#+END_SRC
+** evil-anzu
+#+BEGIN_SRC emacs-lisp
+  (require-package 'evil-anzu)
+  (with-eval-after-load 'evil
+    (require 'evil-anzu))
+#+END_SRC
+* wgrep
+可以用来编辑grep buffer并且将其应用到实际环境中；即以编辑文本的方式编辑实际功能，类似于wdired
+#+BEGIN_SRC emacs-lisp
+  (require-package 'wgrep)
+  (require 'wgrep)
+
+  ;; 编辑完自动保存
+  (setq wgrep-auto-save-buffer t)
+
+  (defun slegetank/wgrep-mode-setup ()
+    "Custom wgrep mode setup."
+    (interactive)
+    (with-current-buffer (current-buffer)
+      (setq-local
+       header-line-format
+       (substitute-command-keys
+        " [C-c C-c]-commit, [C-c C-k]-cancel, [q]-quit")))
+    (ivy-wgrep-change-to-wgrep-mode))
+
+  (add-hook 'ivy-occur-grep-mode-hook (lambda ()
+                                        (evil-define-key 'normal ivy-occur-grep-mode-map (kbd "e") 'slegetank/wgrep-mode-setup)
+                                        (evil-define-key 'normal ivy-occur-grep-mode-map (kbd "x") 'winnow-exclude-lines)
+                                        (evil-define-key 'normal ivy-occur-grep-mode-map (kbd "m") 'winnow-match-lines)
+                                        (evil-define-key 'normal wgrep-mode-map (kbd "q") (lambda ()
+                                                                                            (interactive)
+                                                                                            (kill-buffer)))) t)
+#+END_SRC
+* winnow
+#+BEGIN_SRC emacs-lisp
+  (require-package 'winnow)
+  (require 'winnow)
+  ;; (add-hook 'compilation-mode-hook 'winnow-mode)
+  ;; (add-hook 'ag-mode-hook 'winnow-mode)
+#+END_SRC
+* keys
+ivy for 2 helper functions:
+#+BEGIN_SRC emacs-lisp
+  ;; help
+  (define-key 'help-command (kbd "v") 'counsel-describe-variable)
+  (define-key 'help-command (kbd "f") 'counsel-describe-function)
+#+END_SRC
+
+#+BEGIN_SRC emacs-lisp
+  (define-key evil-normal-state-map (kbd "s-f") 'swiper)
+  (define-key global-map (kbd "s-f") 'swiper)
+
+  (evil-define-key 'normal 'global (kbd "s-m") 'slegetank/evil-mc-enable)
+  (evil-define-key 'normal 'global (kbd "s-g") 'avy-goto-char)
+#+END_SRC
